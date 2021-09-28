@@ -1,30 +1,20 @@
 # This implementation is based on the DenseNet-BC implementation in torchvision
 
-
 import torch
-
-import torch.nn as nn
-import torch.optim as optim
-
-import torch.nn.functional as F
-from torch.autograd import Variable
-
-import torchvision.datasets as dset
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
-import torchvision.models as models
-
-import sys
 import math
+import torch.nn as nn
+import torch.nn.functional as F
+
+from models.sync_batchnorm.batchnorm import SynchronizedBatchNorm2d
 
 
 class Bottleneck(nn.Module):
-    def __init__(self, nChannels, growthRate, drop_rate, training):
+    def __init__(self, nChannels, growthRate, drop_rate, BatchNorm, training):
         super(Bottleneck, self).__init__()
         interChannels = 4*growthRate
-        self.bn1   = nn.BatchNorm2d(nChannels)
+        self.bn1   = BatchNorm(nChannels)
         self.conv1 = nn.Conv2d(nChannels, interChannels, kernel_size=1, bias=False)
-        self.bn2   = nn.BatchNorm2d(interChannels)
+        self.bn2   = BatchNorm(interChannels)
         self.conv2 = nn.Conv2d(interChannels, growthRate, kernel_size=3, padding=1, bias=False)
 
         self.drop_rate = drop_rate
@@ -41,9 +31,9 @@ class Bottleneck(nn.Module):
 
 
 class SingleLayer(nn.Module):
-    def __init__(self, nChannels, growthRate):
+    def __init__(self, nChannels, growthRate, BatchNorm):
         super(SingleLayer, self).__init__()
-        self.bn1   = nn.BatchNorm2d(nChannels)
+        self.bn1   = BatchNorm(nChannels)
         self.conv1 = nn.Conv2d(nChannels, growthRate, kernel_size=3, padding=1, bias=False)
 
     def forward(self, x):
@@ -53,9 +43,9 @@ class SingleLayer(nn.Module):
 
 
 class Transition(nn.Module):
-    def __init__(self, nChannels, nOutChannels, drop_rate, training):
+    def __init__(self, nChannels, nOutChannels, drop_rate, BatchNorm, training):
         super(Transition, self).__init__()
-        self.bn1   = nn.BatchNorm2d(nChannels)
+        self.bn1   = BatchNorm(nChannels)
         self.conv1 = nn.Conv2d(nChannels, nOutChannels, kernel_size=1, bias=False)
 
         self.drop_rate = drop_rate
@@ -71,8 +61,13 @@ class Transition(nn.Module):
 
 
 class DenseNet(nn.Module):
-    def __init__(self, backbone, compression, num_classes, bottleneck, drop_rate, training):
+    def __init__(self, backbone, compression, num_classes, bottleneck, drop_rate, sync_bn, training):
         super(DenseNet, self).__init__()
+
+        if sync_bn == True:
+            BatchNorm = SynchronizedBatchNorm2d
+        else:
+            BatchNorm = nn.BatchNorm2d
 
         if backbone == 'net121' :
             growthRate    = 32
@@ -106,48 +101,48 @@ class DenseNet(nn.Module):
         nChannels    = 2*growthRate
         self.conv1   = nn.Conv2d(3, nChannels, kernel_size=3, padding=1, bias=False)
 
-        self.dense1  = self._make_dense(nChannels, growthRate, nDenseBlocks1, bottleneck, drop_rate, training)
+        self.dense1  = self._make_dense(nChannels, growthRate, nDenseBlocks1, bottleneck, drop_rate, BatchNorm, training)
         nChannels   += nDenseBlocks1 * growthRate
         nOutChannels = int(math.floor(nChannels * compression))
-        self.trans1  = Transition(nChannels, nOutChannels, drop_rate, training)
+        self.trans1  = Transition(nChannels, nOutChannels, drop_rate, BatchNorm, training)
 
         nChannels    = nOutChannels
-        self.dense2  = self._make_dense(nChannels, growthRate, nDenseBlocks2, bottleneck, drop_rate, training)
+        self.dense2  = self._make_dense(nChannels, growthRate, nDenseBlocks2, bottleneck, drop_rate, BatchNorm, training)
         nChannels   += nDenseBlocks2 * growthRate
         nOutChannels = int(math.floor(nChannels * compression))
-        self.trans2  = Transition(nChannels, nOutChannels, drop_rate, training)
+        self.trans2  = Transition(nChannels, nOutChannels, drop_rate, BatchNorm, training)
 
         nChannels    = nOutChannels
-        self.dense3  = self._make_dense(nChannels, growthRate, nDenseBlocks3, bottleneck, drop_rate, training)
+        self.dense3  = self._make_dense(nChannels, growthRate, nDenseBlocks3, bottleneck, drop_rate, BatchNorm, training)
         nChannels   += nDenseBlocks3 * growthRate
         nOutChannels = int(math.floor(nChannels * compression))
-        self.trans3  = Transition(nChannels, nOutChannels, drop_rate, training)
+        self.trans3  = Transition(nChannels, nOutChannels, drop_rate, BatchNorm, training)
 
         nChannels   = nOutChannels
-        self.dense4 = self._make_dense(nChannels, growthRate, nDenseBlocks4, bottleneck, drop_rate, training)
+        self.dense4 = self._make_dense(nChannels, growthRate, nDenseBlocks4, bottleneck, drop_rate, BatchNorm, training)
         nChannels  += nDenseBlocks4 * growthRate
 
-        self.bn1 = nn.BatchNorm2d(nChannels)
+        self.bn1 = BatchNorm(nChannels)
         self.fc  = nn.Linear(nChannels, num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, BatchNorm):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):
                 m.bias.data.zero_()
 
 
-    def _make_dense(self, nChannels, growthRate, nDenseBlocks, bottleneck, drop_rate, training):
+    def _make_dense(self, nChannels, growthRate, nDenseBlocks, bottleneck, drop_rate, BatchNorm, training):
         layers = []
         for i in range(int(nDenseBlocks)):
             if bottleneck:
-                layers.append(Bottleneck(nChannels, growthRate, drop_rate, training))
+                layers.append(Bottleneck(nChannels, growthRate, drop_rate, BatchNorm, training))
             else:
-                layers.append(SingleLayer(nChannels, growthRate))
+                layers.append(SingleLayer(nChannels, growthRate, BatchNorm))
             nChannels += growthRate
         return nn.Sequential(*layers)
 

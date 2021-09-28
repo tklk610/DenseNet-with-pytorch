@@ -17,7 +17,6 @@ def main():
     parser.add_argument('--out_path', type=str, default='inference/output', help='mask image to save')
     parser.add_argument('--backbone', type=str, default='net121', choices=['net121', 'net161', 'net169', 'net201'],
                                                                   help='backbone name (default: net121)')
-    parser.add_argument('--growthRate', type=int, default=12, help='number of features added per DenseNet layer')
     parser.add_argument('--compression', type=int, default=0.7, help='network output stride')
     parser.add_argument('--bottleneck', type=str, default=True, help='network output stride')
     parser.add_argument('--drop_rate', type=int, default=0.5, help='dropout rate')
@@ -29,7 +28,6 @@ def main():
                                                                  comma-separated list of integers only (default=0)')
     parser.add_argument('--img_size', type=int, default=(360, 360), help='crop image size')
     parser.add_argument('--sync_bn', type=bool, default=None, help='whether to use sync bn (default: auto)')
-
     parser.add_argument('--save_dir', action='store_true', default='inference/output', help='save results to *.txt')
 
     args = parser.parse_args()
@@ -38,7 +36,6 @@ def main():
 
     webcam = args.in_path.isnumeric() or args.in_path.endswith('.txt') or args.in_path.lower().startswith(
         ('rtsp://', 'rtmp://', 'http://'))
-
 
     results = 'result' + '_' + str(datetime.datetime.now().strftime("%Y%m%d_%H%M%S")) + '.txt'
     results_file = os.path.join(args.save_dir, results)
@@ -64,6 +61,7 @@ def main():
         num_classes = args.num_classes,
         bottleneck  = args.bottleneck,
         drop_rate   = args.drop_rate,
+        sync_bn     = args.sync_bn,
         training    = args.training
     )
 
@@ -94,7 +92,6 @@ def main():
     #
     #     #print("image:{} label:{} time: {} ".format(image, label, img_time))
     #     print("label:{} time: {} ".format(label, img_time))
-
 
 
     # composed_transforms = transforms.Compose([

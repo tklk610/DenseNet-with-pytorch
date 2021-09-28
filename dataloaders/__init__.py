@@ -29,7 +29,7 @@ def make_data_loader(args, **kwargs):
             transforms.Normalize(mean=mean, std=stdv)
         ])
 
-        ##ImageFolder对象可以将一个文件夹下的文件构造成一类
+        # ImageFolder对象可以将一个文件夹下的文件构造成一类
         # 所以数据集的存储格式为一个类的图片放置到一个文件夹下
         # 然后利用dataloader构建提取器，每次返回一个batch的数据，在很多情况下，利用num_worker参数
         # 设置多线程，来相对提升数据提取的速度
@@ -45,7 +45,7 @@ def make_data_loader(args, **kwargs):
         val_set   = datasets.ImageFolder(cfg.VAL_DATASET_DIR, transform=val_transforms)
 
         train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, **kwargs)
-        val_loader   = DataLoader(val_set, batch_size=args.batch_size*2, shuffle=False, **kwargs)
+        val_loader   = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, **kwargs)
 
         return train_loader, val_loader, num_class
 

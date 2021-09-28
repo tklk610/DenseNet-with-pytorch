@@ -1,7 +1,5 @@
 import argparse
 import os
-import torch
-import numpy as np
 from tqdm import tqdm
 
 from dataloaders import cfg
@@ -14,6 +12,9 @@ from utils.lr_scheduler import LR_Scheduler
 from utils.saver import Saver
 from utils.summaries import TensorboardSummary
 from utils.metrics import Evaluator
+
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 class Trainer(object):
@@ -39,6 +40,7 @@ class Trainer(object):
             num_classes = cfg.NUM_CLASSES,
             bottleneck  = args.bottleneck,
             drop_rate   = args.drop_rate,
+            sync_bn     = args.sync_bn,
             training    = args.training
         )
 
@@ -100,7 +102,7 @@ class Trainer(object):
 
         if args.resume is not None:
             if not os.path.isfile(args.resume):
-                raise RuntimeError("[Note] : no checkpoint found at '{}'" .format(args.resume))
+                raise RuntimeError("[Note] : no checkpoint found at '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
 
@@ -217,7 +219,6 @@ def main():
     parser = argparse.ArgumentParser(description="PyTorch DenseNet Training")
     parser.add_argument('--backbone', type=str, default='net121', choices=['net121', 'net161', 'net169', 'net201'],
                                                                            help='backbone name')
-    parser.add_argument('--growthRate', type=int, default=12, help='number of features added per DenseNet layer')
     parser.add_argument('--compression', type=int, default=0.7, help='network output stride')
     parser.add_argument('--bottleneck', type=str, default=True, help='network output stride')
     parser.add_argument('--drop_rate', type=int, default=0.5, help='dropout rate')
@@ -225,9 +226,8 @@ def main():
     parser.add_argument('--dataset', type=str, default='oled_data', choices=['oled_data'],
                                                                    help='dataset name (default: pascal)')
 
-    parser.add_argument('--use_sbd', action='store_true', default=True, help='whether to use SBD dataset (default: True)')
-    parser.add_argument('--workers', type=int, default=8, metavar='N', help='dataloader threads')
-    parser.add_argument('--img_size', type=int, default=(320, 320), help='train and val image resize')
+    parser.add_argument('--workers', type=int, default=4, metavar='N', help='dataloader threads')
+    parser.add_argument('--img_size', type=int, default=(200, 600), help='train and val image resize')
     parser.add_argument('--loss_type', type=str, default='focal', choices=['ce', 'focal'],
                                                                           help='loss func type (default: ce)')
     # training hyper params
@@ -251,6 +251,7 @@ def main():
     parser.add_argument('--nesterov', action='store_true', default=True, help='whether use nesterov (default: False)')
 
     # cuda, seed and logging
+    parser.add_argument('--sync_bn', type=bool, default=None, help='whether to use sync bn (default: auto)')
     parser.add_argument('--no_cuda', action='store_true', default=False, help='disables CUDA training')
     parser.add_argument('--gpu_ids', type=str, default='0,1', help='use which gpu to train, must be a \
                                                                      comma-separated list of integers only (default=0)')
@@ -275,6 +276,12 @@ def main():
         except ValueError:
             raise ValueError('Argument --gpu_ids must be a comma-separated list of integers only')
 
+    if args.sync_bn is None:
+        if args.cuda and len(args.gpu_ids) > 1:
+            args.sync_bn = True
+            print("[Note] : Sync Batch is used!!!")
+        else:
+            args.sync_bn = False
 
     # default settings for epochs, batch_size and lr
     if args.epochs is None:
@@ -298,7 +305,6 @@ def main():
             'pascal'     : 0.007,
         }
         args.lr = lrs[args.dataset.lower()] / (4 * len(args.gpu_ids)) * args.batch_size
-
 
     if args.checkname is None:
         args.checkname = str(args.backbone) + '_' + str(args.batch_size) + '_' + str(args.epochs)
